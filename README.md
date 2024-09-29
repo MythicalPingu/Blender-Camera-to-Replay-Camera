@@ -18,7 +18,7 @@ Second, run the script and select the replay recording file you want to change. 
 
 Third, click Modify .mcpr
 
-## What the options do:
+## What the options do
 
 Density: Controls the percentage of keyframes transferred. At very low values you might be able to toggle path preview on.
 
@@ -28,3 +28,5 @@ Scene Start is Replay Start: Automatically aligns the start of your scene with t
 
 Enables Catmull Interpolation: By default it uses linear but it might be useful to use smoothing with low density values.
 
+
+## Quick video showing it https://youtu.be/2QIWRUhhq4I
