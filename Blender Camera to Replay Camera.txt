@@ -14,7 +14,7 @@ from bpy.types import Operator
 
 class OT_TestOpenFilebrowser(Operator, ImportHelper):
     bl_idname = "test.open_filebrowser"
-    bl_label = "Modify .json"
+    bl_label = "Modify .mcpr"
     filename_ext = ".mcpr"
     filter_glob: StringProperty(
         default="*.mcpr",
@@ -41,9 +41,9 @@ class OT_TestOpenFilebrowser(Operator, ImportHelper):
         default=True,
     )
     interpolation_type: BoolProperty(
-        name="Disable Catmull interpolation",
-        description="Enables linear interpolation",
-        default=True,
+        name="Enables Catmull Interpolation",
+        description="Default linear interpolation",
+        default=False,
     )
     
     def extract_mcpr(self, filepath): #Open .mcpr
