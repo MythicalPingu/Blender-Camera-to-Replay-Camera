@@ -37,4 +37,6 @@ All camera constraints should automatically be baked correctly but if you are do
 The easiest way to do this is by importing part of the map with Mineways. However, **unselect**  this option when exporting.
 You can also try exporting a test camera path from Replay Mod but it might be more tedious 
 
-![alt text]([http://url/to/img.png](https://media.discordapp.net/attachments/513734977146585091/1276301694157717556/Capture.PNG?ex=66fa7854&is=66f926d4&hm=b8b629b3c2d0dfba7f077c491e0219294f23b3e3a1ae6f4d7061a1ad8b2a9520&=&format=webp&quality=lossless&width=1089&height=418))
+![image](https://github.com/user-attachments/assets/9d5c082b-f4d9-48df-853e-09fd029f2915)
+
+
