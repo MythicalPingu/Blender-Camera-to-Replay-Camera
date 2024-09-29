@@ -1,0 +1,258 @@
+import bpy
+import os
+import tempfile
+import zipfile
+import bpy
+import numpy as np
+import json
+import shutil
+import re
+from mathutils import Quaternion, Euler
+from bpy.props import FloatProperty, IntProperty, StringProperty, BoolProperty
+from bpy_extras.io_utils import ImportHelper
+from bpy.types import Operator
+
+class OT_TestOpenFilebrowser(Operator, ImportHelper):
+    bl_idname = "test.open_filebrowser"
+    bl_label = "Modify .json"
+    filename_ext = ".mcpr"
+    filter_glob: StringProperty(
+        default="*.mcpr",
+        options={'HIDDEN'},
+        maxlen=255,
+    )
+    density_slider: IntProperty(
+        name='Density',
+        description='Percent of keyframes saved. Rounds to the nearest frame',
+        default=100,
+        min=0,
+        max=100,
+        subtype='PERCENTAGE'
+    )
+    time_scalar: FloatProperty(
+        name='Scale Timeline',
+        description='Scales the distance between keyframes. Very low number may overlap keyframes causing crashes',
+        default=1,
+        min=0.01
+    )
+    scene_frame_replay_start: BoolProperty(
+        name="Scene Start is Replay Start",
+        description="If enabled, the scene frame start will be set at the start of replay's timeline",
+        default=True,
+    )
+    interpolation_type: BoolProperty(
+        name="Disable Catmull interpolation",
+        description="Enables linear interpolation",
+        default=True,
+    )
+    
+    def extract_mcpr(self, filepath): #Open .mcpr
+        temp_dir = tempfile.mkdtemp()
+        with zipfile.ZipFile(filepath, 'r') as zip_ref:
+            zip_ref.extractall(temp_dir)
+        return temp_dir
+
+    def check_for_timelines(self, directory): #Make timeline.json if it doesnt exist
+        timelines_json_path = os.path.join(directory, "timelines.json")
+        if not os.path.exists(timelines_json_path):
+            # Create timelines.json file with the specified default content
+            default_content = '{"":[{"keyframes":[],"segments":[],"interpolators":[]},{"keyframes":[],"segments":[],"interpolators":[]}]}'
+            with open(timelines_json_path, 'w') as f:
+                f.write(default_content)
+        return os.path.exists(timelines_json_path)
+
+    def execute(self, context):
+        # Check if an active object is selected and if it's a camera
+        selected_camera = bpy.context.active_object
+        if selected_camera is None or selected_camera.type != 'CAMERA':
+            self.report({'WARNING'}, "No active camera selected. Please select a camera before running this operator.")
+            return {'CANCELLED'}
+        bpy.ops.ed.undo_push()
+        filepath = bpy.path.abspath(self.filepath)
+        
+        if self.interpolation_type:
+            interpolator = '{"type":"catmull-rom-spline","alpha":0.5}'
+        else:
+            interpolator = '"linear"'  
+
+        # Check if the selected path is a file
+        if os.path.isfile(filepath) and filepath.endswith(".mcpr"):
+            temp_dir = None  # Initialize temp_dir to None
+
+            try:
+                # Extract the contents of the .mcpr file
+                temp_dir = self.extract_mcpr(filepath)
+                if temp_dir:
+                    if self.check_for_timelines(temp_dir):
+                        def euler_to_quaternion(euler):
+                            return euler.to_quaternion()
+
+                        def quaternion_to_euler(q):
+                            # Convert quaternion to rotation matrix
+                            w, x, y, z = q
+                            rotation_matrix = np.array([
+                                [1 - 2*y**2 - 2*z**2, 2*x*y - 2*z*w, 2*x*z + 2*y*w],
+                                [2*x*y + 2*z*w, 1 - 2*x**2 - 2*z**2, 2*y*z - 2*x*w],
+                                [2*x*z - 2*y*w, 2*y*z + 2*x*w, 1 - 2*x**2 - 2*y**2]
+                            ])
+
+                            yaw = np.arctan2(rotation_matrix[0, 2], rotation_matrix[2, 2])
+                            
+                            # Pitch (about local x axis)
+                            pitch = np.arcsin(-rotation_matrix[1, 2])
+                            
+                            # Roll (about local z axis)
+                            roll = np.arctan2(rotation_matrix[1, 0], rotation_matrix[1, 1])
+                            
+                            return yaw, pitch, roll
+
+                        def bake_camera_animation(density_percentage):
+                            scene = bpy.context.scene
+                            selected_camera = bpy.context.active_object
+
+                            # Set the frame range for baking
+                            frame_start = scene.frame_start
+                            frame_end = scene.frame_end
+                            fps = scene.render.fps
+
+                            # Select the camera
+                            bpy.context.view_layer.objects.active = selected_camera
+
+                            # Calculate the frame range based on the time step
+                            num_keyframes = round((frame_end - frame_start + 1) * density_percentage / 100)
+                            frame_range = np.linspace(frame_start, frame_end, num=num_keyframes, endpoint=True, dtype=int)
+
+                            # Add the first frame if it's not already included
+                            if frame_start not in frame_range:
+                                frame_range = np.append(frame_start, frame_range)
+
+                            # Add the last frame if it's not already included
+                            if frame_end not in frame_range:
+                                frame_range = np.append(frame_range, frame_end)
+
+                            # Bake camera animation
+                            bpy.ops.nla.bake(frame_start=frame_start, 
+                                             frame_end=frame_end, 
+                                             visual_keying=True, 
+                                             clear_constraints=True, 
+                                             clear_parents=True, 
+                                             use_current_action=True, 
+                                             clean_curves=True, 
+                                             bake_types={'OBJECT'})
+
+                            keyframe_list = []
+
+                            for frame in frame_range:
+                                scene.frame_set(frame)
+                                loc = selected_camera.location
+                                if selected_camera.rotation_mode == 'QUATERNION':
+                                    rot_quat = selected_camera.rotation_quaternion
+                                elif selected_camera.rotation_mode == 'XYZ':
+                                    rot_euler = selected_camera.rotation_euler
+                                    rot_quat = euler_to_quaternion(rot_euler)
+                                else:
+                                    print("Unsupported rotation mode:", selected_camera.rotation_mode)
+                                    continue
+
+                                # Create a quaternion representing a 90-degree rotation about the global x-axis
+                                rotation_correction = Quaternion((np.sqrt(0.5), np.sqrt(0.5), 0, 0))
+                                rot_quat = rotation_correction @ rot_quat
+
+                                yaw, pitch, roll = quaternion_to_euler(rot_quat)
+                                yaw_degrees = np.degrees(yaw)
+                                pitch_degrees = np.degrees(pitch)
+                                roll_degrees = np.degrees(roll) * -1 + 180
+
+                                # Adjust location according to specifications
+                                loc_adjusted = loc.copy()
+                                loc_adjusted.y = loc.z - 1.62
+                                loc_adjusted.z = -loc.y
+
+                                keyframe_data = {
+                                    "time": round((((frame - (context.scene.frame_start if self.scene_frame_replay_start else 1)) * 1000) * self.time_scalar) / context.scene.render.fps),
+                                    "properties": {
+                                        "camera:rotation": [yaw_degrees, pitch_degrees, roll_degrees],
+                                        "camera:position": [round(loc_adjusted.x, 3), round(loc_adjusted.y, 3), round(loc_adjusted.z, 3)]
+                                    }
+                                }
+                                keyframe_list.append(keyframe_data)
+
+                            # Convert keyframe list to string format
+                            keyframe_string = str(keyframe_list).replace("'", '"').replace(' ', '')
+
+                            # Create the segments string
+                            segments_str = ',"segments":' + str([0] * (len(keyframe_list) - 1)).replace(' ', '')
+                            
+                            # Combine both strings
+                            final_string = '{"keyframes":' + keyframe_string + segments_str + ',"interpolators":[{"type":' + interpolator + ',"properties":["camera:position","camera:rotation"]}]}' # or "type":"linear"
+                            
+                            # Read and process the content of the timelines.json file
+                            timelines_json_path = os.path.join(temp_dir, "timelines.json")
+                            with open(timelines_json_path, "r") as f:
+                                content = f.read()                    
+                            
+                            # Initialize counters and flags
+                            level = 0
+                            first_brace_found = False
+                            second_brace_start = -1
+                            second_brace_end = -1
+
+                            # Iterate over the string to find the second instance of {}
+                            for i, char in enumerate(content):
+                                if char == '{':
+                                    if level == 1 and first_brace_found:
+                                        second_brace_start = i
+                                    level += 1
+                                elif char == '}':
+                                    level -= 1
+                                    if level == 1 and first_brace_found and second_brace_start != -1:
+                                        second_brace_end = i + 1
+                                        break
+                                elif char == ',' and level == 1 and not first_brace_found:
+                                    first_brace_found = True
+
+                            # Replace the second instance of {} with final_string
+                            if second_brace_start != -1 and second_brace_end != -1:
+                                result = (content[:second_brace_start] + final_string + content[second_brace_end:])
+
+                                with open(timelines_json_path, "w") as f:
+                                    f.write(result)
+                                    
+                                # Write the modified timelines.json back to the .mcpr archive
+                                with zipfile.ZipFile(filepath, 'w') as zip_ref:
+                                    for root, dirs, files in os.walk(temp_dir):
+                                        for file in files:
+                                            file_path = os.path.join(root, file)
+                                            zip_ref.write(file_path, os.path.relpath(file_path, temp_dir))
+                                print("changed timeline successfully")
+                            else:
+                                result = content  # No replacement if the pattern is not found
+                                print("failed")
+
+                        
+                            bpy.ops.ed.undo_push()
+                            bpy.ops.ed.undo()
+                            bpy.ops.ed.undo()
+                            
+                        # Set your desired density percentage (0-100%)
+                        density_percentage = self.density_slider
+
+                        # Call the function with the desired time step
+                        bake_camera_animation(density_percentage)
+
+                    else:
+                        print("Did not find timeline")
+                else:
+                    print("Failed to extract .mcpr file")
+            finally:
+                if temp_dir:
+                    shutil.rmtree(temp_dir)  # Ensure the temp directory is removed
+        else:
+            self.report({'WARNING'}, "Invalid.mcpr file selected")
+
+        return {'FINISHED'}
+
+# Test the operator in the Blender UI
+if __name__ == "__main__":
+    bpy.utils.register_class(OT_TestOpenFilebrowser)
+    bpy.ops.test.open_filebrowser('INVOKE_DEFAULT')
