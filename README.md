@@ -5,11 +5,14 @@ The script I use to convert selected blender cameras into replay mod's timeline
 If you haven't used scripts in Blender, copy and paste the text into the Text Editor and click the Run Script.
 
 First, have the camera you want to import selected.
+
 Second, run the script and select the replay recording file you want to change. Files are normally located here: AppData\Roaming.minecraft\replay_recordings
-Third, click Modify .json (it should only modify the timelines.json within this .mcpr)
+
+Third, click Modify .mcpr
 
 **I recommended having Toggle Path Preview off**
 It will lag otherwise.
+
 **Make backups of important replay recordings**
 Not responsible for corrupted files.
 
